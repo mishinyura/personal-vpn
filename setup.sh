@@ -37,7 +37,13 @@ EOF
 if [ ! -f openvpn/openvpn.conf ]; then
   echo "📦 Initializing OpenVPN configuration..."
   docker run -v $(pwd)/openvpn:/etc/openvpn --rm kylemanna/openvpn ovpn_genconfig -u udp://$SERVER_IP:443
-  docker run -v $(pwd)/openvpn:/etc/openvpn --rm -e EASYRSA_BATCH=1 -e EASYRSA_PASSIN= -e EASYRSA_PASSOUT= kylemanna/openvpn ovpn_initpki
+  # Non-interactive CA init (no passphrase)
+  docker run -v $(pwd)/openvpn:/etc/openvpn --rm \
+    -e EASYRSA_BATCH=1 \
+    -e EASYRSA_REQ_CN="VPN-Server" \
+    -e EASYRSA_PASSIN= \
+    -e EASYRSA_PASSOUT= \
+    kylemanna/openvpn ovpn_initpki nopass
 fi
 
 # Create VPN users credentials
