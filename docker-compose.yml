@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  openvpn:
+    image: kylemanna/openvpn
+    container_name: openvpn
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./openvpn:/etc/openvpn
+    ports:
+      - "443:1194/udp"
+    restart: unless-stopped
+    environment:
+      - DEBUG=1
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/html:/usr/share/nginx/html
+    restart: unless-stopped
