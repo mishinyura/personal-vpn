@@ -1,109 +1,266 @@
 # VPN + Nginx Docker Setup
 
-This project provides a ready-to-run **Docker Compose stack** with:
+Этот проект разворачивает простой и практичный стек на Docker Compose, состоящий из:
 
-- **OpenVPN** on port **443** for secure VPN access and location masking
-- **Nginx** on port **80** as a reverse proxy, with support for multiple subdomains
-- **Admin username/password authentication** for VPN
+- **OpenVPN** на **UDP 443**
+- **Nginx** на **TCP 8080**
+- доступа клиентов через готовые **`.ovpn`**-профили с **аутентификацией по сертификатам**
 
-## 📦 Project Structure
+Эта версия сделана более понятной и безопасной по сравнению с предыдущей:
 
-```
+- без фиктивной схемы логин/пароль
+- без некорректной подстановки credentials в клиентский профиль
+- с меньшим риском конфликта портов на сервере
+- с более понятным управлением пользователями
+
+---
+
+## Структура проекта
+
+```text
 vpn-nginx/
-│── docker-compose.yml      # Compose file for OpenVPN + Nginx
-│── setup.sh                # Setup script (auto initializes everything)
-│── clean.sh                # Cleanup script
-│── nginx/
-│    ├── conf.d/            # Nginx vhost configs (add more subdomains here)
-│    │    └── default.conf
-│    └── html/              # Static HTML root for default site
-│         └── index.html
-│── openvpn/                # OpenVPN configs (auto-generated)
-│── vpn-users/              # Admin/user credentials for OpenVPN
+├── docker-compose.yml
+├── setup.sh
+├── clean.sh
+├── user-management.sh
+├── nginx/
+│   ├── conf.d/
+│   │   └── default.conf
+│   └── html/
+│       └── index.html
+├── openvpn/
+└── *.ovpn
 ```
 
-## 🚀 Setup Instructions
+---
 
-1. **Unzip the project** and enter the folder:
+## Что делает этот стек
+
+### OpenVPN
+
+Контейнер OpenVPN:
+
+- генерирует конфигурацию сервера
+- создает локальную PKI-инфраструктуру (CA, сертификаты и ключи)
+- выпускает клиентские сертификаты
+- экспортирует готовые `.ovpn`-профили для подключения
+
+### Nginx
+
+Контейнер Nginx:
+
+- отдает простую тестовую страницу
+- работает на порту **8080**
+- вынесен с **80** на **8080**, чтобы уменьшить шанс конфликта с уже установленными сервисами, например ISPmanager, Apache или системным Nginx
+
+---
+
+## Требования
+
+Перед запуском проекта на сервере должны быть:
+
+- установленный Docker
+- установленный плагин Docker Compose (`docker compose`)
+- доступ в интернет
+- публичный IP-адрес или домен
+- открытые порты в firewall / security group:
+  - **UDP 443** для OpenVPN
+  - **TCP 8080** для тестовой страницы Nginx
+
+---
+
+## Назначение файлов
+
+### `docker-compose.yml`
+
+Описывает два сервиса:
+
+- `openvpn`
+- `nginx`
+
+### `setup.sh`
+
+Инициализирует проект:
+
+- создает каталоги
+- записывает базовый конфиг Nginx
+- создает тестовую HTML-страницу
+- инициализирует конфиг OpenVPN
+- создает PKI, если она еще не создана
+- запускает контейнеры
+- генерирует клиентские `.ovpn`-файлы
+- создает файл с инструкцией по подключению
+
+### `user-management.sh`
+
+Позволяет:
+
+- добавить клиента
+- отозвать клиента
+- посмотреть список выданных сертификатов
+
+### `clean.sh`
+
+Останавливает контейнеры и удаляет сгенерированные данные.
+
+---
+
+## Установка
+
+Сделайте скрипты исполняемыми:
 
 ```bash
-unzip vpn-nginx.zip
-cd vpn-nginx
+chmod +x setup.sh clean.sh user-management.sh
 ```
 
-2. **Make the setup script executable**:
-
-```bash
-chmod +x setup.sh
-```
-
-3. **Run setup** (this initializes OpenVPN, generates certificates, creates admin credentials, and starts services):
+Запустите настройку:
 
 ```bash
 ./setup.sh
 ```
 
-4. After setup, you will get a client configuration file:
+Либо передайте домен или IP явно:
 
-```
-myclient.ovpn
+```bash
+./setup.sh ВАШ_ДОМЕН_ИЛИ_IP
 ```
 
-Import this into your **OpenVPN Connect** client.
+Пример:
+
+```bash
+./setup.sh 103.35.191.134
+```
+
+или
+
+```bash
+./setup.sh vpn.example.com
+```
 
 ---
 
-## 🔑 VPN Authentication
+## Что происходит во время `setup.sh`
 
-This setup uses **two layers of authentication**:
+При запуске `setup.sh` скрипт делает следующее:
 
-1. **Certificates** (generated during `setup.sh`)
-2. **Username/Password** (stored in `vpn-users/credentials`)
+1. Проверяет наличие необходимых команд
+2. Определяет публичный IP или использует переданный endpoint
+3. Создает нужные директории
+4. Создает конфиг Nginx
+5. Создает базовую HTML-страницу
+6. Инициализирует конфигурацию OpenVPN
+7. Инициализирует PKI, если она еще не существует
+8. Запускает Docker-контейнеры
+9. Генерирует клиентские сертификаты
+10. Экспортирует `.ovpn`-профили
+11. Создает файл `VPN_CONNECTION_INSTRUCTIONS.txt` с краткой инструкцией
 
-After running `setup.sh`, you’ll see something like:
+---
 
+## Клиенты, создаваемые по умолчанию
+
+По умолчанию создаются следующие клиентские профили:
+
+- `admin.ovpn`
+- `iman.ovpn`
+- `paria.ovpn`
+
+Любой из этих файлов можно импортировать в OpenVPN-клиент и использовать для подключения.
+
+---
+
+## Как подключиться
+
+1. Установите OpenVPN-клиент на устройство
+2. Импортируйте один из сгенерированных `.ovpn`-файлов
+3. Подключитесь
+
+Эта сборка использует **аутентификацию по сертификатам**.
+
+Это значит:
+
+- логин и пароль не требуются
+- доступ дается только при наличии валидного клиентского сертификата
+
+---
+
+## Доступ к Nginx
+
+После установки тестовая страница будет доступна по адресу:
+
+```text
+http://ВАШ_IP:8080
 ```
-🔑 Admin VPN credentials created:
-   Username: admin
-   Password: 3fa92d7e1c5a4f6d
+
+Пример:
+
+```text
+http://103.35.191.134:8080
 ```
 
-- These credentials are required in **OpenVPN Connect** when importing `myclient.ovpn`.  
-- To add more users, edit `vpn-users/credentials` and append new lines:
+Эта страница нужна только для проверки и в дальнейшем может быть изменена под ваши задачи.
 
-```
-user1:password123
-user2:secret456
+---
+
+## Добавление нового VPN-клиента
+
+Чтобы добавить нового клиента, выполните:
+
+```bash
+./user-management.sh add newuser
 ```
 
-Then restart the OpenVPN container:
+После этого будут выполнены действия:
+
+- создан клиентский сертификат
+- сгенерирован файл `newuser.ovpn`
+
+Этот файл можно импортировать в OpenVPN-клиент.
+
+---
+
+## Отзыв VPN-клиента
+
+Чтобы отозвать существующего клиента, выполните:
+
+```bash
+./user-management.sh revoke newuser
+```
+
+В результате:
+
+- сертификат клиента будет отозван
+- будет сгенерирован новый CRL
+- локальный файл `newuser.ovpn` будет удален
+- контейнер OpenVPN будет перезапущен
+
+---
+
+## Просмотр списка выданных сертификатов
+
+Чтобы посмотреть список выданных клиентских сертификатов:
+
+```bash
+./user-management.sh list
+```
+
+---
+
+## Перезапуск сервисов
+
+Перезапустить все сервисы:
+
+```bash
+docker compose restart
+```
+
+Перезапустить только OpenVPN:
 
 ```bash
 docker compose restart openvpn
 ```
 
----
-
-## 🌍 Nginx Reverse Proxy
-
-- Default config is in `nginx/conf.d/default.conf`
-- To add more subdomains, create new `.conf` files inside `nginx/conf.d/`
-- Example for `api.example.com` → local service on port 8080:
-
-```nginx
-server {
-    listen 80;
-    server_name api.example.com;
-
-    location / {
-        proxy_pass http://host.docker.internal:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-Reload Nginx by restarting the container:
+Перезапустить только Nginx:
 
 ```bash
 docker compose restart nginx
@@ -111,26 +268,174 @@ docker compose restart nginx
 
 ---
 
-## 🧹 Cleanup
+## Просмотр состояния контейнеров
 
-To remove all containers, configs, and generated files:
+Показать список контейнеров:
 
 ```bash
-chmod +x clean.sh
-./clean.sh
+docker compose ps
 ```
 
-This will:
+Посмотреть логи OpenVPN:
 
-- Stop and remove Docker containers (OpenVPN + Nginx)
-- Remove OpenVPN configs and certificates
-- Remove Nginx configs and HTML
-- Remove client `.ovpn` profiles
+```bash
+docker compose logs openvpn --tail=100
+```
+
+Посмотреть логи Nginx:
+
+```bash
+docker compose logs nginx --tail=100
+```
+
+Следить за логами в реальном времени:
+
+```bash
+docker compose logs -f
+```
 
 ---
 
-## ✅ Verification
+## Проверка портов
 
-- Visit `http://YOUR_SERVER_IP` → You should see the Nginx welcome page.
-- Connect with OpenVPN → Your public IP should now match the server’s IP.
-- Use admin username/password for VPN login.
+Проверить, что нужные порты слушаются:
+
+```bash
+ss -tulpn | grep -E ':443|:8080'
+```
+
+Ожидаемо:
+
+- **UDP 443** должен использоваться OpenVPN
+- **TCP 8080** должен использоваться Nginx
+
+---
+
+## Полезные команды Docker Compose
+
+Проверить итоговую конфигурацию:
+
+```bash
+docker compose config
+```
+
+Поднять сервисы:
+
+```bash
+docker compose up -d
+```
+
+Остановить сервисы:
+
+```bash
+docker compose down
+```
+
+Остановить и удалить контейнеры, сети и тома:
+
+```bash
+docker compose down -v
+```
+
+---
+
+## Очистка проекта
+
+Для полной очистки выполните:
+
+```bash
+./clean.sh
+```
+
+Скрипт:
+
+- остановит контейнеры
+- удалит OpenVPN-конфигурацию и PKI
+- удалит конфиг и HTML для Nginx
+- удалит все сгенерированные `.ovpn`-файлы
+- удалит файл с инструкциями подключения
+
+> **Внимание:** это удаляет все сгенерированные VPN-данные без возможности восстановления.
+
+---
+
+## Что важно знать
+
+### 1. Эта версия использует только сертификаты
+
+В этой сборке **нет отдельной авторизации по логину и паролю**.  
+Если в будущем понадобится именно схема **сертификат + username/password**, ее нужно реализовывать отдельно на стороне сервера OpenVPN.
+
+### 2. Nginx специально вынесен на порт `8080`
+
+Это сделано потому, что на сервере порт **80** уже может быть занят:
+
+- ISPmanager
+- системным Nginx
+- Apache
+- другими контейнерами
+
+### 3. OpenVPN использует `UDP 443`
+
+Это удобно, потому что:
+
+- UDP подходит для OpenVPN
+- номер порта `443` часто реже блокируется в сетях
+- он не конфликтует с **TCP 443**, так как это другой протокол
+
+### 4. Firewall нужно проверить отдельно
+
+Даже если контейнеры запущены, нужно убедиться, что:
+
+- **UDP 443** открыт
+- **TCP 8080** открыт
+- облачный firewall или security group не блокирует доступ
+
+---
+
+## Типовой порядок работы
+
+### Первый запуск
+
+```bash
+chmod +x setup.sh clean.sh user-management.sh
+./setup.sh
+```
+
+### Проверка
+
+```bash
+docker compose ps
+docker compose logs openvpn --tail=100
+docker compose logs nginx --tail=100
+ss -tulpn | grep -E ':443|:8080'
+```
+
+### Подключение клиента
+
+- импортируйте `admin.ovpn` в OpenVPN-клиент
+- подключитесь
+
+### Добавление нового клиента
+
+```bash
+./user-management.sh add alex
+```
+
+### Отзыв клиента
+
+```bash
+./user-management.sh revoke alex
+```
+
+---
+
+## Краткое резюме
+
+Этот проект поднимает:
+
+- OpenVPN-сервер на **UDP 443**
+- Nginx на **TCP 8080**
+- клиентские `.ovpn`-профили на основе сертификатов
+
+Подходит как базовая и понятная заготовка для личного VPN-сервера на Docker.
