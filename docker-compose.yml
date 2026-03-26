@@ -1,4 +1,4 @@
-version: '3.8'
+version: '1.0.0'
 
 services:
   openvpn:
@@ -6,21 +6,18 @@ services:
     container_name: openvpn
     cap_add:
       - NET_ADMIN
-    volumes:
-      - ./openvpn:/etc/openvpn
-      - ./vpn-users:/etc/openvpn/ovpn-credentials
     ports:
       - "443:1194/udp"
+    volumes:
+      - ./openvpn:/etc/openvpn
     restart: unless-stopped
-    environment:
-      - DEBUG=1
 
   nginx:
-    image: nginx:alpine
-    container_name: nginx
+    image: nginx:1.27-alpine
+    container_name: vpn-nginx
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./nginx/html:/usr/share/nginx/html
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
     restart: unless-stopped
