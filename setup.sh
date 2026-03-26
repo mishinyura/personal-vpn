@@ -1,106 +1,163 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-SERVER_IP=$(curl -s ifconfig.me)
-VPN_USERS=("admin" "iman" "paria")  # Array of users to create
+DOMAIN_OR_IP="${1:-}"
+CLIENTS=("admin" "iman" "paria")
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "❌ Required command not found: $1"
+    exit 1
+  }
+}
+
+detect_endpoint() {
+  if [[ -n "${DOMAIN_OR_IP}" ]]; then
+    echo "${DOMAIN_OR_IP}"
+    return
+  fi
+
+  curl -4 -fsSL ifconfig.me || {
+    echo "❌ Could not detect public IP automatically."
+    echo "Usage: ./setup.sh YOUR_DOMAIN_OR_IP"
+    exit 1
+  }
+}
+
+check_port_free_tcp() {
+  local port="$1"
+  if ss -tulpn 2>/dev/null | grep -qE "[[:space:]]:${port}[[:space:]]"; then
+    echo "⚠️ Port ${port} appears to be in use."
+    ss -tulpn | grep -E "[[:space:]]:${port}[[:space:]]" || true
+  fi
+}
 
 echo "🔧 Setting up OpenVPN + Nginx stack..."
 
-# Create necessary directories
-mkdir -p openvpn nginx/conf.d nginx/html vpn-users
+require_cmd docker
+require_cmd curl
+require_cmd openssl
+require_cmd ss
 
-# Create Nginx config
-cat > nginx/conf.d/default.conf <<EOF
+if ! docker compose version >/dev/null 2>&1; then
+  echo "❌ docker compose plugin not found."
+  exit 1
+fi
+
+ENDPOINT="$(detect_endpoint)"
+VPN_PROTO="udp"
+VPN_PORT="443"
+NGINX_PORT="8080"
+
+echo "🌐 VPN endpoint: ${ENDPOINT}"
+echo "📡 OpenVPN will listen on: ${VPN_PROTO}://${ENDPOINT}:${VPN_PORT}"
+echo "🌍 Nginx will be available on: http://${ENDPOINT}:${NGINX_PORT}"
+
+mkdir -p openvpn nginx/conf.d nginx/html
+
+cat > nginx/conf.d/default.conf <<'EOF'
 server {
-    listen 80;
-    server_name mezgls.ir;
+    listen 80 default_server;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
 
     location / {
-        root /usr/share/nginx/html;
-        index index.html;
+        try_files $uri $uri/ =404;
     }
 }
 EOF
 
-# Create default index.html
 cat > nginx/html/index.html <<EOF
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Nginx + OpenVPN</title>
+  <meta charset="utf-8">
+  <title>VPN Server</title>
 </head>
 <body>
-  <h1>Welcome to your Nginx + OpenVPN Server 🚀</h1>
+  <h1>OpenVPN + Nginx is running</h1>
+  <p>VPN endpoint: ${ENDPOINT}:${VPN_PORT}/udp</p>
+  <p>Nginx endpoint: http://${ENDPOINT}:${NGINX_PORT}</p>
 </body>
 </html>
 EOF
 
-# Initialize OpenVPN if not already done
-if [ ! -f openvpn/openvpn.conf ]; then
-  echo "📦 Initializing OpenVPN configuration..."
-  docker run -v $(pwd)/openvpn:/etc/openvpn --rm kylemanna/openvpn ovpn_genconfig -u udp://$SERVER_IP:443
-  # Non-interactive CA init (no passphrase)
-  docker run -v $(pwd)/openvpn:/etc/openvpn --rm \
+# safer idempotency checks
+if [[ ! -f openvpn/openvpn.conf || ! -d openvpn/pki ]]; then
+  echo "📦 Initializing OpenVPN server config and PKI..."
+
+  docker run --rm \
+    -v "$(pwd)/openvpn:/etc/openvpn" \
+    kylemanna/openvpn \
+    ovpn_genconfig -u "${VPN_PROTO}://${ENDPOINT}:${VPN_PORT}"
+
+  docker run --rm \
+    -v "$(pwd)/openvpn:/etc/openvpn" \
     -e EASYRSA_BATCH=1 \
-    -e EASYRSA_REQ_CN="VPN-Server" \
-    -e EASYRSA_PASSIN= \
-    -e EASYRSA_PASSOUT= \
-    kylemanna/openvpn ovpn_initpki nopass
+    kylemanna/openvpn \
+    ovpn_initpki nopass
+else
+  echo "ℹ️ Existing OpenVPN config detected, skipping PKI init."
 fi
 
-# Create VPN users credentials file
-echo "🔐 Generating credentials and certificates for users..."
-> vpn-users/credentials  # Clear existing credentials
-
-for USER in "${VPN_USERS[@]}"; do
-  # Generate random password
-  PASSWORD=$(openssl rand -hex 8)
-  
-  # Add to credentials file
-  echo "$USER:$PASSWORD" >> vpn-users/credentials
-  
-  # Generate client certificate without password
-  docker run -v $(pwd)/openvpn:/etc/openvpn --rm \
-    kylemanna/openvpn easyrsa build-client-full $USER nopass >/dev/null 2>&1 || true
-  
-  # Generate .ovpn file
-  docker run -v $(pwd)/openvpn:/etc/openvpn --rm \
-    kylemanna/openvpn ovpn_getclient $USER > ${USER}.ovpn
-  
-  # Modify .ovpn to include credentials reference
-  sed -i '/auth-user-pass/a auth-user-pass /etc/openvpn/ovpn-credentials/credentials' ${USER}.ovpn
-  
-  echo "  ✅ $USER - Password: $PASSWORD - Config: ${USER}.ovpn"
-done
-
-chmod 600 vpn-users/credentials
-
-# Start services
-echo "🚀 Starting Docker containers..."
+echo "🚀 Starting containers..."
 docker compose up -d
 
-# Create connection instructions file
+echo "👤 Generating client certificates..."
+for client in "${CLIENTS[@]}"; do
+  if [[ -f "${client}.ovpn" ]]; then
+    echo "  ℹ️ ${client}.ovpn already exists, skipping"
+    continue
+  fi
+
+  docker run --rm \
+    -v "$(pwd)/openvpn:/etc/openvpn" \
+    kylemanna/openvpn \
+    easyrsa build-client-full "${client}" nopass
+
+  docker run --rm \
+    -v "$(pwd)/openvpn:/etc/openvpn" \
+    kylemanna/openvpn \
+    ovpn_getclient "${client}" > "${client}.ovpn"
+
+  echo "  ✅ generated ${client}.ovpn"
+done
+
 cat > VPN_CONNECTION_INSTRUCTIONS.txt <<EOF
 OpenVPN Connection Instructions
 ===============================
 
-Server IP: $SERVER_IP
+Server endpoint:
+  ${ENDPOINT}:${VPN_PORT}/udp
 
-User Credentials:
-$(for USER in "${VPN_USERS[@]}"; do
-  PASSWORD=$(grep "^$USER:" vpn-users/credentials | cut -d: -f2)
-  echo "- $USER : $PASSWORD"
-done)
+Generated client profiles:
+$(for client in "${CLIENTS[@]}"; do echo "  - ${client}.ovpn"; done)
 
-To connect:
-1. Import the .ovpn file into your OpenVPN client
-2. When prompted, enter your username and password above
-3. Enjoy secure browsing!
+How to connect:
+1. Install an OpenVPN client.
+2. Import one of the .ovpn files.
+3. Connect.
+
+Notes:
+- This setup uses certificate-based authentication.
+- Nginx test page is available at:
+  http://${ENDPOINT}:${NGINX_PORT}
 
 Generated on: $(date)
 EOF
 
-echo "✅ Setup complete!"
-echo "📄 VPN configuration files generated:"
-ls -1 *.ovpn
-echo "📝 Connection instructions saved to: VPN_CONNECTION_INSTRUCTIONS.txt"
+echo
+echo "✅ Setup complete"
+echo "📄 Generated client profiles:"
+ls -1 *.ovpn 2>/dev/null || true
+echo
+echo "📝 Instructions saved to VPN_CONNECTION_INSTRUCTIONS.txt"
+echo
+echo "🔎 Current container status:"
+docker compose ps
+echo
+echo "🔎 Port check:"
+check_port_free_tcp 80
+check_port_free_tcp 8080
