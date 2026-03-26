@@ -16,7 +16,7 @@ services:
     image: nginx:1.27-alpine
     container_name: vpn-nginx
     ports:
-      - "8080:80"
+      - "8088:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/html:/usr/share/nginx/html:ro
