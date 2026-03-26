@@ -1,22 +1,25 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-echo "🧹 Stopping and removing Docker services..."
+echo "⚠️ This will DELETE:"
+echo "  - containers"
+echo "  - OpenVPN config and PKI"
+echo "  - nginx config/html"
+echo "  - generated client .ovpn files"
+read -r -p "Type YES to continue: " CONFIRM
 
-if command -v docker compose &> /dev/null; then
-    docker compose down -v
-elif command -v docker-compose &> /dev/null; then
-    docker-compose down -v
-else
-    echo "❌ Docker not found."
-    exit 1
+if [[ "${CONFIRM}" != "YES" ]]; then
+  echo "Aborted."
+  exit 1
 fi
 
-echo "🗑 Removing OpenVPN configs and certificates..."
-rm -rf openvpn vpn-users
-echo "🗑 Removing Nginx configs and html..."
+echo "🧹 Stopping and removing Docker services..."
+docker compose down -v || true
+
+echo "🗑 Removing generated data..."
+rm -rf openvpn
 rm -rf nginx/conf.d nginx/html
-echo "🗑 Removing client ovpn files..."
-rm -f *.ovpn
+rm -f ./*.ovpn
+rm -f VPN_CONNECTION_INSTRUCTIONS.txt
 
 echo "✅ Cleanup complete."
